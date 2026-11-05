@@ -16,7 +16,7 @@ pub mod ttl;
 
 pub use actors::{ActorId, Actors};
 pub use call::{check_call, record_call};
-pub use env::{advance_ledgers, LedgerJumps};
+pub use env::{advance_ledgers, advance_ledgers_with, LedgerJumps, DEFAULT_SECONDS_PER_LEDGER};
 pub use failure::{FailureKind, FuzzFailure};
 pub use harness::{Harness, Outcome};
 pub use model::{expect_unless, Balances, TestToken};

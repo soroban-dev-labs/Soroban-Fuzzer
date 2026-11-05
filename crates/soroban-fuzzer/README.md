@@ -173,6 +173,7 @@ Fuzzer::<MyHarness>::new()
         weight: 2,                           // vs. 10 for an action
         max_jump: 50_000,                    // largest single jump
         horizon: 120_960,                    // state must stay live this long (≈7 days)
+        seconds_per_ledger: 5,               // timestamp step per ledger jumped
     })
     .resource_budget(ResourceBudget::mainnet_percent(60))
     .check_unsigned_calls()                  // needs `MyHarness: Clone`

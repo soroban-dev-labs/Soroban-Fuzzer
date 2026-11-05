@@ -83,6 +83,7 @@ fn horizon_longer_than_ttl_is_reported() {
             weight: 5,
             max_jump: 600_000,
             horizon: 60 * 17_280,
+            ..LedgerJumps::default()
         })
         .run()
         .unwrap_err();
