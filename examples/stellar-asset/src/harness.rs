@@ -56,6 +56,7 @@ pub enum Action {
     Mint(ActorId, Amount),
     Clawback(ActorId, Amount),
     SetAuthorized(ActorId, bool),
+    SetAdmin(ActorId),
 }
 
 /// An allowance as the SAC stores it.
@@ -69,6 +70,7 @@ struct Allowance {
 pub struct SacHarness {
     pub token: TestToken,
     pub actors: Actors,
+    admin: ActorId,
     balances: Balances,
     deauthorized: Vec<ActorId>,
     /// Keyed by (from, spender).
@@ -139,18 +141,19 @@ impl Harness for SacHarness {
     type Action = Action;
 
     fn setup(env: &Env) -> Self {
-        let admin = Address::generate(env);
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let actors = Actors::generate(env, ACTORS as usize);
+        let admin = ActorId(0);
+        let sac = env.register_stellar_asset_contract_v2(actors.get(admin).clone());
         // Allow deauthorization and clawback. New balances pick up the
         // clawback flag when created, so set it before minting.
         sac.issuer().set_flag(IssuerFlags::RevocableFlag);
         sac.issuer().set_flag(IssuerFlags::ClawbackEnabledFlag);
-        let token = TestToken::from_sac(sac, admin);
-        let actors = Actors::generate(env, ACTORS as usize);
+        let token = TestToken::from_sac(sac, actors.get(admin).clone());
         Self {
             balances: token.mint_to_all(env, &actors, INITIAL),
             token,
             actors,
+            admin,
             deauthorized: Vec::new(),
             allowances: BTreeMap::new(),
         }
@@ -176,6 +179,7 @@ impl Harness for SacHarness {
             1 => amount_and(n).prop_map(|(a, x)| Action::Mint(a, x)),
             1 => amount_and(n).prop_map(|(a, x)| Action::Clawback(a, x)),
             1 => (actor(n), any::<bool>()).prop_map(|(a, on)| Action::SetAuthorized(a, on)),
+            1 => actor(n).prop_map(Action::SetAdmin),
         ]
         .boxed()
     }
@@ -293,6 +297,12 @@ impl Harness for SacHarness {
                     ),
                 )
             }
+            Action::SetAdmin(a) => {
+                let a = id(a);
+                let got = admin.try_set_admin(&addr(a));
+                Ok(check_call(env, "set_admin", got, Ok::<(), Error>(()))?
+                    .if_executed(|| self.admin = a))
+            }
         }
     }
 
@@ -302,6 +312,11 @@ impl Harness for SacHarness {
     fn invariants(&self, env: &Env) -> Result<(), String> {
         let token = self.token.client(env);
         let admin = self.token.admin_client(env);
+        ensure_eq!(
+            admin.admin(),
+            self.actors.get(self.admin).clone(),
+            "admin"
+        );
         self.token
             .check_balances(env, &self.actors, &self.balances)?;
         for (a, from) in self.actors.iter() {
@@ -330,9 +345,10 @@ impl Harness for SacHarness {
                 self.actors.get(a).clone()
             }
             Action::TransferFrom(s, ..) | Action::BurnFrom(s, ..) => self.actors.get(s).clone(),
-            Action::Mint(..) | Action::Clawback(..) | Action::SetAuthorized(..) => {
-                self.token.admin.clone()
-            }
+            Action::Mint(..)
+            | Action::Clawback(..)
+            | Action::SetAuthorized(..)
+            | Action::SetAdmin(..) => self.actors.get(self.admin).clone(),
         };
         vec![signer]
     }
