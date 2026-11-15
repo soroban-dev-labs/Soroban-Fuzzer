@@ -3,8 +3,8 @@ use soroban_sdk::{
     Env,
 };
 
-/// Seconds per ledger used when advancing time.
-const SECONDS_PER_LEDGER: u64 = 5;
+/// Default ledger close time, in seconds.
+pub const DEFAULT_SECONDS_PER_LEDGER: u64 = 5;
 
 /// Build the `Env` used for one fuzz case.
 pub(crate) fn fresh_env(mock_all_auths: bool) -> Env {
@@ -18,16 +18,24 @@ pub(crate) fn fresh_env(mock_all_auths: bool) -> Env {
     env
 }
 
-/// Move the ledger forward by `ledgers` (sequence number and timestamp).
+/// Move the ledger forward by `ledgers` (sequence number and timestamp),
+/// assuming the default close time of
+/// [`DEFAULT_SECONDS_PER_LEDGER`] seconds per ledger.
 ///
 /// Storage entries whose TTL runs out become archived (persistent/instance)
 /// or disappear (temporary), exactly as they would on the network.
 pub fn advance_ledgers(env: &Env, ledgers: u32) {
+    advance_ledgers_with(env, ledgers, DEFAULT_SECONDS_PER_LEDGER);
+}
+
+/// Like [`advance_ledgers`], but with an explicit close time: the timestamp
+/// moves by `ledgers * seconds_per_ledger`.
+pub fn advance_ledgers_with(env: &Env, ledgers: u32, seconds_per_ledger: u64) {
     env.ledger().with_mut(|l| {
         l.sequence_number = l.sequence_number.saturating_add(ledgers);
         l.timestamp = l
             .timestamp
-            .saturating_add(ledgers as u64 * SECONDS_PER_LEDGER);
+            .saturating_add((ledgers as u64).saturating_mul(seconds_per_ledger));
     });
 }
 
@@ -47,6 +55,10 @@ pub struct LedgerJumps {
     /// keep all of its state alive for this long without anyone touching it,
     /// so set it to the TTL your contract promises (default ≈ 7 days).
     pub horizon: u32,
+    /// Seconds the ledger timestamp moves per ledger jumped (default 5).
+    /// Change it to test contracts that read `env.ledger().timestamp()`
+    /// (vesting, auctions, timelocks) under a different close time.
+    pub seconds_per_ledger: u64,
 }
 
 impl LedgerJumps {
@@ -54,6 +66,7 @@ impl LedgerJumps {
         weight: 0,
         max_jump: 0,
         horizon: 0,
+        seconds_per_ledger: DEFAULT_SECONDS_PER_LEDGER,
     };
 
     pub fn enabled(&self) -> bool {
@@ -67,6 +80,38 @@ impl Default for LedgerJumps {
             weight: 2,
             max_jump: 50_000,
             horizon: 120_960, // 7 days of 5s ledgers
+            seconds_per_ledger: DEFAULT_SECONDS_PER_LEDGER,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn jump(seconds_per_ledger: u64, ledgers: u32) -> (u32, u64) {
+        let env = fresh_env(false);
+        let (seq0, ts0) = (env.ledger().sequence(), env.ledger().timestamp());
+        advance_ledgers_with(&env, ledgers, seconds_per_ledger);
+        (
+            env.ledger().sequence() - seq0,
+            env.ledger().timestamp() - ts0,
+        )
+    }
+
+    #[test]
+    fn jump_moves_timestamp_by_n_times_seconds_per_ledger() {
+        for (secs, n) in [(5, 100), (6, 1_000), (1, 7), (12, 0)] {
+            assert_eq!(jump(secs, n), (n, n as u64 * secs));
+        }
+    }
+
+    #[test]
+    fn default_is_five_seconds() {
+        assert_eq!(LedgerJumps::default().seconds_per_ledger, 5);
+        let env = fresh_env(false);
+        let ts0 = env.ledger().timestamp();
+        advance_ledgers(&env, 10);
+        assert_eq!(env.ledger().timestamp() - ts0, 50);
     }
 }

@@ -9,7 +9,7 @@ use soroban_sdk::Env;
 
 use crate::{
     call,
-    env::{advance_ledgers, fresh_env},
+    env::{advance_ledgers_with, fresh_env},
     failure::{FailureKind, FuzzFailure},
     harness::{Harness, Outcome},
     panic::catch_quiet,
@@ -349,7 +349,7 @@ impl<H: Harness> Fuzzer<H> {
                 Step::AdvanceLedger(n) => {
                     let n = (*n).min(self.jumps.horizon.saturating_sub(advanced));
                     if n > 0 {
-                        advance_ledgers(&env, n);
+                        advance_ledgers_with(&env, n, self.jumps.seconds_per_ledger);
                         advanced += n;
                         report.ledger_jumps += 1;
                     }

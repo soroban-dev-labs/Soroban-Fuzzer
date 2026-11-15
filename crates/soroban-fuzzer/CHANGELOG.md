@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `LedgerJumps` has a new `seconds_per_ledger` field (default 5) that sets how far the ledger timestamp moves per ledger jumped. **Breaking:** code that builds `LedgerJumps { .. }` with a struct literal must add the field or end with `..LedgerJumps::default()`.
+- New `advance_ledgers_with(env, ledgers, seconds_per_ledger)`. `advance_ledgers(env, ledgers)` keeps its signature and still uses 5 seconds per ledger.
+
 ## 0.1.0 (2026-11-02)
 
 First release.
