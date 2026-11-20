@@ -201,3 +201,105 @@ fn short_debug(v: &impl fmt::Debug) -> String {
         s
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{contract, contractimpl, symbol_short, Env};
+
+    #[contract]
+    pub struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {
+        pub fn put(env: Env, key: u32, val: u32) {
+            env.storage().persistent().set(&key, &val);
+        }
+
+        pub fn remove(env: Env, key: u32) {
+            env.storage().persistent().remove(&key);
+        }
+    }
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let id = env.register(TestContract, ());
+        (env, id)
+    }
+
+    #[test]
+    fn changed_entries_empty_when_nothing_changed() {
+        let (env, _id) = setup();
+        let before = snapshot(&env);
+        let after = snapshot(&env);
+        assert!(changed_entries(&before, &after).is_empty());
+    }
+
+    #[test]
+    fn changed_entries_reports_created_updated_removed() {
+        let (env, id) = setup();
+        let client = TestContractClient::new(&env, &id);
+
+        client.put(&1, &10);
+        client.put(&2, &20);
+        let before = snapshot(&env);
+
+        client.put(&3, &30); // created
+        client.put(&1, &11); // updated
+        client.remove(&2); // removed
+        let after = snapshot(&env);
+
+        let changes = changed_entries(&before, &after);
+        assert_eq!(changes.len(), 3, "unexpected changes: {changes:?}");
+        assert!(changes.iter().any(|c| c.starts_with("created ")));
+        assert!(changes.iter().any(|c| c.starts_with("changed ")));
+        assert!(changes.iter().any(|c| c.starts_with("deleted ")));
+    }
+
+    #[test]
+    fn expired_respects_live_until_and_contract_filter() {
+        let env = Env::default();
+        let id = env.register(TestContract, ());
+        let client = TestContractClient::new(&env, &id);
+        client.put(&7, &70);
+
+        let key = to_scval(&env, &7u32);
+        let entry = find(&env, &id, Some(&key), Durability::Persistent)
+            .expect("persistent entry exists");
+        let live_until = entry.live_until;
+
+        // At the boundary ledger the entry is still live.
+        env.ledger().set_sequence_number(live_until);
+        assert!(expired(&env, None).is_empty());
+
+        // Past `live_until` the entry is expired.
+        env.ledger().set_sequence_number(live_until + 1);
+        let all = expired(&env, None);
+        assert!(all.iter().any(|e| e.belongs_to(&id)));
+
+        // Filtering by a different contract excludes it.
+        let other = Address::generate(&env);
+        assert!(expired(&env, Some(&[other])).is_empty());
+        // Filtering by the owning contract includes it.
+        assert!(expired(&env, Some(&[id.clone()]))
+            .iter()
+            .any(|e| e.belongs_to(&id)));
+    }
+
+    #[test]
+    fn ttl_and_is_expired_at_boundary() {
+        let entry = StoredEntry {
+            contract: None,
+            key: None,
+            durability: Durability::Persistent,
+            live_until: 100,
+        };
+        // `live_until` itself is still live.
+        assert!(!entry.is_expired(100));
+        assert_eq!(entry.ttl(100), 0);
+        assert_eq!(entry.ttl(90), 10);
+        // One ledger past the boundary is expired.
+        assert!(entry.is_expired(101));
+        assert_eq!(entry.ttl(101), 0);
+    }
+}
